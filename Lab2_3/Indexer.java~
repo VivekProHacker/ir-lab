@@ -1,0 +1,394 @@
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.util.*;
+import java.util.regex.Pattern;
+import java.io.*;
+
+public class Indexer {
+
+    public static ArrayList<termfreq> doclist;
+    public static TreeMap<String,ArrayList > frequencyData ;
+    public static HindiStemmerLight stemObj;
+    private static String RESULT_FNAME = "result.txt";
+    private static String STOPWORD_INDEX = "StopwordIndex.txt";
+
+    public Indexer(){
+    	 doclist=new ArrayList<termfreq>();
+         frequencyData = new TreeMap<String, ArrayList>();
+
+         stemObj=new HindiStemmerLight();
+
+    }
+
+//-----  	@Contains all the method for Indexing the Documents.
+    		public static void findIndexer() throws IOException, ClassNotFoundException{
+    		Scanner keyboard = new Scanner(System.in);
+			System.out.println("Enter The path of the collecetion");
+			String filePath=keyboard.nextLine();
+			File dir = new File(filePath);
+
+			//Store the file name in an array.
+			File[] flist=dir.listFiles();
+		
+		System.out.println("Enter 1 to Construct the Indexer and 2 if the Indexer is already constructed");
+		int option=keyboard.nextInt();
+		switch(option){
+		    case 1 :
+       			createIndexFile(frequencyData, doclist,flist);
+		       break; 
+		    case 2 :
+       			frequencyData=readIndexFile();
+		       break; 
+   		 
+		    default : createIndexFile(frequencyData,doclist,flist);
+		      
+		}
+	
+					
+		
+		System.out.println("Enter 1 if you want to print the posting List, 2 to Skip");
+		int option2=keyboard.nextInt();		
+		switch(option2){
+		    case 1 :
+       			postingList(frequencyData,doclist);
+		       break; 
+		    case 2:
+			   break;
+
+		}		
+		
+		Scanner keyboard1 = new Scanner(System.in);
+		System.out.println("Enter the Query Ex- शक लूट ");
+		String query=keyboard1.nextLine();
+		String token[]=query.split(" ");
+		//sort an array.
+		Arrays.sort(token);
+
+
+		for(int i=0;i<token.length;i++){
+			System.out.println(token[i]);
+
+			}
+		//call the rank function based on tfidf
+		rank(frequencyData,doclist,token,flist);
+
+    }
+
+
+//--------------------- @read the stop words
+public static TreeMap<String,Integer > readStopWords(String stopWordsFilename)
+    {
+	TreeMap<String,Integer > stopWords = new TreeMap<String,Integer >();
+
+	try
+	    {
+		Scanner stopWordsFile = new Scanner(new File(stopWordsFilename));
+		int numStopWords = stopWordsFile.nextInt();
+		
+		for (int i = 0; i < numStopWords; i++){
+		    stopWords.put( stopWordsFile.next(),1);
+		   
+
+	}
+		stopWordsFile.close();
+	    }
+	catch (FileNotFoundException e)
+	    {
+		System.err.println(e.getMessage());
+		System.exit(-1);
+	    }
+
+	return stopWords;
+    }
+
+
+//------         @Create Index and Store it Into a disk
+public static void createIndexFile(TreeMap<String,ArrayList > frequencyData,ArrayList<termfreq> doclist,File[] flist) throws FileNotFoundException, IOException{
+		Scanner keyboard = new Scanner(System.in);
+		
+		int fileSize=flist.length;
+		
+/*call the function readStopWord which will read all the stopword
+ * and store it into array
+ */
+		
+		TreeMap<String,Integer> = readStopWords("Hindistopword.txt");
+	
+	/* For optimizing the time to remove stopwords from file
+	 * */	
+		ArrayList<stopWordIndex> stopWordIndx= readStopWordIndex(STOPWORD_INDEX);
+		
+		
+		/* For getting the number of threads required based on number of file
+		 * Thread will remove the stopwords and Index all the files
+		 * */
+		int length =Integer.toString(fileSize).length();
+		length=length-1; // 		
+		int dividend=fileSize/(int)Math.pow(10,length);		
+		int remainder=fileSize% (int)Math.pow(10,length);
+		
+		if(remainder>0){
+		Index[] obj=new Index[dividend+1];
+		Thread[] thread=new Thread[dividend+1];
+
+		for(int i=0;i<dividend;i++){
+		 obj[i]= new Index( i*((int)Math.pow(10,length))+1,(i+1)*((int)Math.pow(10,length)),flist,stopWords,stopWordIndx,frequencyData,doclist );
+		  thread[i]=new Thread(obj[i]);	
+		
+		}
+		obj[dividend]= new Index( dividend*((int)Math.pow(10,length))+1,(dividend+1)*((int)Math.pow(10,length))+remainder,flist,stopWords,stopWordIndx,frequencyData,doclist);
+		thread[dividend]=new Thread(obj[dividend]);		
+		//start the threads		
+		for(int i=0;i<dividend+1;i++){
+		thread[i].start();
+		}			
+		//join the threads
+		for(int i=0;i<dividend+1;i++){
+		try{		
+		thread[i].join();
+		} catch( InterruptedException e){
+		System.out.println("main hread");
+		}
+			
+		}		
+		}else{
+		Index[] obj=new Index[dividend];
+		Thread[] thread=new Thread[dividend+1];
+		for(int i=0;i<dividend;i++){
+		 obj[i]= new Index( i*(10^dividend)+1,(i+1)*(10^dividend),flist,stopWords,stopWordIndx,frequencyData,doclist );
+		 thread[i]=new Thread(obj[i]);
+		}
+
+		//start the thread
+		for(int i=0;i<dividend+1;i++){
+		thread[i].start();
+		}
+		//join the threads
+		for(int i=0;i<dividend;i++){
+		thread[i]=new Thread(obj[i]);
+	
+		}
+		
+		}
+		
+		
+		ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream("TreeMap"));
+		oos.writeObject(frequencyData);
+		oos.flush();
+		oos.close();
+		
+		
+	}
+
+//--              @Genearate the rank based on the query.
+public static void rank( TreeMap<String,ArrayList > frequencyData,ArrayList<termfreq> doclist, String[] token,File[] flist){
+		System.out.println("======================Rank of the documents=======================");
+		int fileSize=flist.length;
+		double[] rank=new double[fileSize];
+		Arrays.fill(rank,0.0);
+		
+		for(int i=0;i<token.length;i++){
+				//if query word is contained in Dictionary
+				//calculate tf-idf score for all document conatining that word
+				if (frequencyData.containsKey(token[i])){
+					for(int x=0;x<frequencyData.get(token[i]).size();x++){
+						ArrayList<termfreq> obj1=frequencyData.get(token[i]);
+							double weight=obj1.get(x).term_freq *Math.log(frequencyData.size() / obj1.size());
+					System.out.println("Hello");
+					rank[obj1.get(x).doc_id]=rank[obj1.get(x).doc_id]+(weight/frequencyData.size());
+						}
+
+					}
+
+			//	}
+
+			}
+		int z=fileSize;
+		// logic to sort the index of the array.
+		Integer[] idx= new Integer[fileSize];
+		
+		for(int i=0;i<fileSize;i++)
+		idx[i]=i;
+		Arrays.sort(idx,new Comparator<Integer>(){
+			public int compare(final Integer o1,final Integer o2){
+				return Double.compare(rank[o1],rank[o2]);
+				}
+			});
+
+				for(int i=fileSize-1;i>=fileSize-10;i--){
+					String textFilename=flist[idx[i]].getName();
+					System.out.println("Rank "+ (fileSize-i)+" score " +rank[idx[i]] +" Doc Id" +((idx[i]+1) )+ "File Name:"+textFilename);
+					}
+					
+
+	}
+
+
+//
+
+	public static void postingList( TreeMap<String,ArrayList > frequencyData,ArrayList<termfreq> doclist){
+		System.out.println("======================Posting List=======================");
+		System.out.println("Term                     [Doc num,term frequency]");
+		for(String word : frequencyData.keySet( )){
+			System.out.printf("%15s  ", word);
+			for(int x=0;x<frequencyData.get(word).size();x++){
+				ArrayList<termfreq> obj1=frequencyData.get(word);
+				if(obj1.get(x)!=null)
+				System.out.printf("[ %d ,%d ]",obj1.get(x).doc_id,obj1.get(x).term_freq);
+			}
+			System.out.println();
+			}
+
+		}
+
+class Index implements Runnable
+{   
+	//int id,File file, String[] stopWords,ArrayList<stopWordIndex> stopWordIndx
+	int id1;
+	int id2;	
+	File[] flist;
+	String[] stopWords;
+	ArrayList<stopWordIndex> stopWordIndx;
+	TreeMap<String,ArrayList > frequencyData ;
+	ArrayList<termfreq> doclist;
+	
+	public Index(int id1,int id2,File[] flist, String[] stopWords,ArrayList<stopWordIndex> stopWordIndx,TreeMap<String,ArrayList > frequencyData,ArrayList<termfreq> doclist ){
+		this.id1=id1;//start of the file
+		this.id2=id2;//end of the file
+		this.flist=flist;//array of file name
+		this.stopWords=stopWords;
+		this.stopWordIndx=stopWordIndx;
+		this.frequencyData=frequencyData;
+		this.doclist=doclist;
+		}
+	public TreeMap getTree(){
+		return frequencyData;
+		}
+//thread will start from here
+	public void run()
+	{
+	for(int id=id1;id<=id2;id++){
+	String word;
+	File file=flist[id];// read file by file
+	String textFilename=file.getName();
+	try
+	    {
+		Scanner textFile = new Scanner(new FileReader(file));
+		
+		System.out.println("Reading the file :"+id+"   name  "+textFilename);
+		textFile.useDelimiter(Pattern.compile("<title>(.+?)</title>"));
+		textFile.useDelimiter(Pattern.compile("[ \n\r\t,.;:?!'\"]+"));
+
+	//	PrintWriter outFile = new PrintWriter( new BufferedWriter(new FileWriter(RESULT_FNAME, true)));
+
+		while (textFile.hasNext())
+		    {
+			//read word from the file
+			word = textFile.next();
+			//word=stemObj.stem(word);
+			if (isStopWord(word, stopWords,stopWordIndx)){
+			   // System.out.print(word + " ");
+			    		}
+			else{
+						//Check if the word already is in Dictionary	
+						if (frequencyData.containsKey(word))
+						{  // The word has occurred before, so get its count from the map
+						@SuppressWarnings("unchecked")
+						ArrayList<termfreq> obj1=frequencyData.get(word);
+						int flag=0;
+							if(obj1!=null)
+							for(int x=0;x<obj1.size();x++){
+																
+								if(obj1.get(x)!=null)
+								if(obj1.get(x).doc_id==id){
+									obj1.get(x).term_freq++;
+									flag=1;
+									break;
+									}
+
+								}
+								if(flag==0){
+									//doclist=new ArrayList<termfreq>();
+							termfreq obj=new termfreq(id);
+
+							frequencyData.get(word).add(obj);
+									}
+
+						//frequencyData.get(word).add(id+1);
+
+						 // Auto-unboxed
+						}else{
+
+							doclist=new ArrayList<termfreq>();
+							termfreq obj=new termfreq(id);
+							doclist.add(obj);
+							if(doclist!=null)
+							frequencyData.put(word,doclist);
+
+							}
+
+
+
+
+
+				//end of the logic
+			    //outFile.print(word + " ");
+		    }
+		    }
+		//System.out.println("\n\nText after removing stop words is in " + RESULT_FNAME);
+		//outFile.println();
+
+		textFile.close();
+		//outFile.close();
+	    }
+	catch (FileNotFoundException e)
+	    {
+		System.err.println(e.getMessage());
+		System.exit(-1);
+	    }
+	
+}
+	
+	}	
+public static Boolean isStopWord(String word, String[] stopWords,ArrayList<stopWordIndex> stopWordIndx)
+{
+// compareWords(word1, word2)
+// returns 0 if word1 and word2 are the same
+// negative if word1 is alphabetically before word2
+// positive if word1 is alphabetically before word2
+
+boolean found = false;   // word found in stopWords
+
+// ******** complete definition here *********
+int to=116;
+int from=126;
+for(int i=0;i<stopWordIndx.size();i++){
+	String temp = word.substring(0,0);
+	stopWordIndex obj1=stopWordIndx.get(i);
+	if(obj1.getWord()==temp){
+		to=obj1.getTo();
+		from=obj1.getFrom();
+		}
+	
+	}
+
+for(int i=to;i<=from;i++){
+if(compareWords(word,stopWords[i])==0){
+found=true;
+break ;
+}
+}
+
+return found;
+}
+
+public static int compareWords(String word1, String word2)
+{
+return word1.compareToIgnoreCase(word2);
+
+}
+
+
+}
